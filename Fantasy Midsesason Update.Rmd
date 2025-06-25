@@ -11,12 +11,12 @@ library(jsonlite)
 library(readxl)
 
 #Extract ESPN API league info
-league_id <- 365193920
+league_id <- <insert league ID>
 season  <- 2025
 
 Sys.setenv(
-  SWID    = "2E146BDB-25EA-4223-946B-DB25EAB2236D",
-  espn_s2 = "AEAxzOSWKNL3S%2BfBy8w5gG1TjwwfyiQhCmhu4kg7azsbMtCcVcdZDGi2h4dKT5YxA0HqpZ7%2BILl1w3TEeMn%2FTN2NB0OsjcjGZR8Dhz%2F6VkAKVDUcQ4iiKFRq8QNHKkzSlGPxx6uTRJ94XS6ux98FUmhr9wZrD9HZ2dh2i5554uWrAOlLjdeCWjVh49MTkdQVd1MLY6bsSHUhg0j9%2FCT7lF7tYjBdHnUaT%2B5jhAmtBGo5tldNQ%2FA2cxMJ%2BbUFDxi6PN8OTCvXc4l3B1%2FpVek2%2FLLXREQ9nYlGH6cAMuJk6p%2F3GA%3D%3D"
+  SWID    = <insert SWID cookie>,
+  espn_s2 = <insert espn_s2 cookie>
 )
 
 base_url <- sprintf("https://lm-api-reads.fantasy.espn.com/apis/v3/games/flb/seasons/%s/segments/0/leagues/%s",
