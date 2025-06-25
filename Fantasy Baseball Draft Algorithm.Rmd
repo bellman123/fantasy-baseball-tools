@@ -1,0 +1,311 @@
+---
+title: "Fantasy Baseball Draft Algo"
+output: html_document
+date: "2025-02-24"
+---
+
+#load packages
+library(tidyverse)
+library(ggplot2)
+library(readxl)
+library(lpSolve)
+library(ompr)
+library(ompr.roi)
+library(ROI.plugin.glpk)
+
+
+#MONTE CARLO SIMULATION APPROACH
+espn_adp_tidy <- espn_adp %>%
+filter(!is.na(Pos))
+
+espn_adp_tidy <- espn_adp_tidy %>%
+  mutate(PlayerID = row_number(),
+  Pos = ifelse(Pos == 'DH', 'UTL', Pos))
+
+  
+# Define positions needed for the team
+# Define positions needed for the team with weights based on positional scarcity
+positions <- c('C', '1B', '2B', '3B', 'SS', 'OF', 'OF', 'OF', 'UTL', 'UTL', 
+               'SP', 'SP', 'SP', 'SP', 'SP', 'SP', 'SP', 'SP', 'SP', 'RP', 'RP')
+pos_weights <- c(C = 1.0, '1B' = 1.0, '2B' = 1.0, '3B' = 1.0, SS = 1.0, 
+                 OF = 1.0, UTL = 1.0, SP = 0.9, RP = 1.0)
+
+# Function to simulate a single draft using ben_picks as ADP floors
+simulate_draft <- function(ben_picks, positions, pos_weights, espn_adp_tidy) {
+  selected_team <- data.frame()
+  remaining_positions <- positions
+  pitch_check <- 0
+  pick_num <- 1
+  pos_weights1 <- pos_weights^3
+  
+  for (pick in seq_along(ben_picks)) {
+    adp_floor <- ben_picks[pick]
+    available_players <- espn_adp_tidy %>%
+      filter(Pos %in% remaining_positions & floor(1.05*mock_rank) >= adp_floor & mock_rank <= adp_floor + 25) %>%
+      arrange(desc(avg_fpts))
+    
+    if (pitch_check == 1) {
+      available_players <- available_players %>%
+        filter(Pos != 'SP' & Pos != 'RP')
+  }
+    
+    if (nrow(available_players) > 0 & pick_num <= 3) {
+# Calculate weighted avg_fpts based on positional scarcity
+      available_players <- available_players %>%
+        mutate(weighted_avg_fpts = avg_fpts * pos_weights1[Pos]) %>%
+        arrange(desc(weighted_avg_fpts))
+      
+# Introduce randomness by sampling one of the top N players
+      N <- min(5, nrow(available_players))  # Sample from top 5 or fewer if less available
+      selected_player <- available_players[sample(1:N, 1), ]
+      selected_team <- bind_rows(selected_team, selected_player)
+      espn_adp_tidy <- espn_adp_tidy %>%
+        filter(PlayerID != selected_player$PlayerID)
+      pos <- selected_player$Pos
+      remaining_positions <- remaining_positions[-match(pos, remaining_positions)]
+      pitch_check <- ifelse((pos == 'SP' | pos == 'RP') & pick_num < 18, 1, 0)
+    }
+    
+    if (nrow(available_players) > 0 & pick_num > 3) {
+# Calculate weighted avg_fpts based on positional scarcity
+      available_players <- available_players %>%
+        mutate(weighted_avg_fpts = avg_fpts * pos_weights[Pos]) %>%
+        arrange(desc(weighted_avg_fpts))
+      
+# Introduce randomness by sampling one of the top N players
+      N <- min(5, nrow(available_players))  # Sample from top 5 or fewer if less available
+      selected_player <- available_players[sample(1:N, 1), ]
+      selected_team <- bind_rows(selected_team, selected_player)
+      espn_adp_tidy <- espn_adp_tidy %>%
+        filter(PlayerID != selected_player$PlayerID)
+      pos <- selected_player$Pos
+      remaining_positions <- remaining_positions[-match(pos, remaining_positions)]
+      pitch_check <- ifelse((pos == 'SP' | pos == 'RP') & pick_num < 18, 1, 0)
+    }
+    
+    pick_num <- pick_num + 1
+  }
+  
+  return(selected_team)
+}
+
+# Number of simulations
+n_simulations <- 500
+
+# Example ben_picks vector based on the draft logic from previous steps
+ben_picks <- draft_pick(first_pick, n_rds)  # Replace with your actual picks
+
+# Run the simulations
+set.seed(136)  # For reproducibility
+all_simulations <- replicate(n_simulations, simulate_draft(ben_picks, positions, pos_weights, espn_adp_tidy), simplify = FALSE)
+
+# Analyze the results
+# Extract total points for each simulation
+total_points <- sapply(all_simulations, function(team) sum(team$avg_fpts, na.rm = TRUE))
+
+# Summary statistics
+summary(total_points)
+
+# Find the index of the simulation with the maximum total points
+max_index <- which.max(total_points)
+
+# View the selected team with the maximum total points
+best_team <- all_simulations[[max_index]]
+View(best_team)
+
+#save best_team examples for potential draft roadmaps
+best_team7 <- best_team
+
+########################################################################
+#TWEAK MONTE CARLO TO ALSO SORT BY avg point differential after avg_fpts
+simulate_draft_diff <- function(ben_picks, positions, pos_weights, espn_adp_tidy) {
+  selected_team <- data.frame()
+  remaining_positions <- positions
+  pitch_check <- 0
+  pick_num <- 1
+  pos_weights1 <- pos_weights^3
+  
+  for (pick in seq_along(ben_picks)) {
+    adp_floor <- ben_picks[pick]
+    available_players <- espn_adp_tidy %>%
+      filter(Pos %in% remaining_positions & floor(1.05*mock_rank) >= adp_floor & mock_rank <= adp_floor + 25) %>%
+      arrange(desc(avg_fpts))
+    
+    if (pitch_check == 1) {
+      available_players <- available_players %>%
+        filter(Pos != 'SP' & Pos != 'RP')
+  }
+    
+    if (nrow(available_players) > 0 & pick_num <= 3) {
+# Calculate weighted avg_fpts based on positional scarcity
+      available_players <- available_players %>%
+        mutate(weighted_avg_fpts = avg_fpts * pos_weights1[Pos]) %>%
+        arrange(desc(weighted_avg_fpts))
+      
+# Introduce randomness by sampling one of the top N players
+      N <- min(5, nrow(available_players))  # Sample from top 5 or fewer if less available
+      selected_player <- available_players[sample(1:N, 1), ]
+      selected_team <- bind_rows(selected_team, selected_player)
+      espn_adp_tidy <- espn_adp_tidy %>%
+        filter(PlayerID != selected_player$PlayerID)
+      pos <- selected_player$Pos
+      remaining_positions <- remaining_positions[-match(pos, remaining_positions)]
+      pitch_check <- ifelse((pos == 'SP' | pos == 'RP') & pick_num < 18, 1, 0)
+    }
+    
+    if (nrow(available_players) > 0 & pick_num > 3) {
+# Calculate weighted avg_fpts based on positional scarcity
+      available_players <- available_players %>%
+        mutate(weighted_avg_fpts = avg_fpts * pos_weights[Pos]) %>%
+        arrange(desc(weighted_avg_fpts))
+      
+# Introduce randomness by sampling one of the top N players
+      N <- min(5, nrow(available_players))  # Sample from top 5 or fewer if less available
+      selected_player <- available_players[sample(1:N, 1), ]
+      selected_team <- bind_rows(selected_team, selected_player)
+      espn_adp_tidy <- espn_adp_tidy %>%
+        filter(PlayerID != selected_player$PlayerID)
+      pos <- selected_player$Pos
+      remaining_positions <- remaining_positions[-match(pos, remaining_positions)]
+      pitch_check <- ifelse((pos == 'SP' | pos == 'RP') & pick_num < 18, 1, 0)
+    }
+    
+    pick_num <- pick_num + 1
+  }
+  
+  return(selected_team)
+}
+
+# Number of simulations
+n_simulations <- 500
+
+# Example ben_picks vector based on the draft logic from previous steps
+ben_picks <- draft_pick(first_pick, n_rds)  # Replace with your actual picks
+
+# Run the simulations
+set.seed(136)  # For reproducibility
+all_simulations <- replicate(n_simulations, simulate_draft(ben_picks, positions, pos_weights, espn_adp_tidy), simplify = FALSE)
+
+# Analyze the results
+# Extract total points for each simulation
+total_points <- sapply(all_simulations, function(team) sum(team$avg_fpts, na.rm = TRUE))
+
+# Summary statistics
+summary(total_points)
+
+# Find the index of the simulation with the maximum total points
+max_index <- which.max(total_points)
+
+# View the selected team with the maximum total points
+best_team <- all_simulations[[max_index]]
+View(best_team)
+
+########################################################################
+# MIP P2
+espn_adp_tidy <- espn_adp %>%
+filter(!is.na(Pos))
+
+espn_adp_tidy <- espn_adp_tidy %>%
+  mutate(PlayerID = row_number(),
+  Pos = ifelse(Pos == 'DH', 'UTL', Pos))
+# Positions needed for your team
+positions <- c('C', '1B', '2B', '3B', 'SS', 
+               'OF', 'OF', 'OF', 'UTL', 'UTL', 
+               'SP', 'SP', 'SP', 'SP', 'SP', 'SP', 'SP', 
+               'RP', 'RP')
+
+# Number of required players at each position
+positions_needed <- as.data.frame(table(positions))
+colnames(positions_needed) <- c("Pos", "Required")
+
+# All players
+players <- espn_adp_tidy$PlayerID
+
+# Map players to their positions
+player_positions <- espn_adp_tidy %>% select(PlayerID, Pos)
+player_avg_fpts <- espn_adp_tidy %>% select(PlayerID, avg_fpts)
+player_adp <- espn_adp_tidy %>% select(PlayerID, espn_adp)
+
+# Picks (as indices)
+picks <- seq_along(ben_picks)
+num_picks <- length(ben_picks)
+
+# Create a data frame representing the availability of each player at each pick
+player_pick_df <- expand.grid(p = players, r = picks) %>%
+  left_join(player_adp, by = c("p" = "PlayerID")) %>%
+  mutate(ben_pick = ben_picks[r],
+         availability = ifelse(espn_adp >= ben_pick, 1, 0))
+
+# Identify indices where players are not available
+no_availability_indices <- player_pick_df %>% 
+  filter(availability == 0) %>%
+  select(p, r)
+
+model <- MIPModel() %>%
+  add_variable(x[p, r], p = players, r = picks, type = "binary") %>%
+  set_objective(
+    sum_expr(
+      player_avg_fpts$avg_fpts[match(p, player_avg_fpts$PlayerID)] * x[p, r],
+      p = players, r = picks
+    ),
+    sense = "max"
+  )
+
+model <- model %>%
+  add_constraint(
+    sum_expr(x[p, r], p = players) == 1,
+    r = picks
+  )
+
+model <- model %>%
+  add_constraint(
+    sum_expr(x[p, r], r = picks) <= 1,
+    p = players
+  )
+
+# for (i in 1:nrow(positions_needed)) {
+#  pos <- positions_needed$Pos[i]
+#  required_num <- positions_needed$Required[i]
+#  
+#  # Players eligible for this position
+#  players_in_pos <- players[espn_adp_tidy$Pos == pos]
+#  
+#  # If there are no players for a position, skip (to avoid errors)
+#  if (length(players_in_pos) == 0) {
+#    stop(paste("No players available for position:", pos))
+#  }
+  
+#  model <- model %>%
+#    add_constraint(
+#      sum_expr(x[p, r], p = players_in_pos, r = picks) == required_num
+#    )
+#}
+
+# Set x[p, r] = 0 where players are not available
+for (i in 1:nrow(no_availability_indices)) {
+  p_i <- no_availability_indices$p[i]
+  r_i <- no_availability_indices$r[i]
+  model <- model %>%
+    add_constraint(
+      x[p_i, r_i] == 0
+    )
+}
+
+result <- model %>%
+  solve_model(with_ROI(solver = "glpk", verbose = TRUE))
+
+# Extract the solution
+solution <- get_solution(result, x[p, r])
+
+# Filter the selected players
+selected_players <- solution %>%
+  filter(value == 1) %>%
+  select(p, r) %>%
+  left_join(espn_adp_tidy, by = c("p" = "PlayerID")) %>%
+  arrange(r)
+
+View(selected_players)
+
+# Calculate total projected fantasy points
+total_avg_fpts <- sum(selected_players$avg_fpts)
+cat("Total Projected Fantasy Points:", total_avg_fpts, "\n"
